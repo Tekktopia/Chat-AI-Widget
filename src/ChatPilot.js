@@ -9,6 +9,15 @@
 (function(window, document) {
   'use strict';
 
+  // Phrases that trigger human handoff
+  const HANDOFF_TRIGGERS = [
+    'speak to a human', 'talk to a human', 'speak to someone', 'talk to someone',
+    'real person', 'human agent', 'live agent', 'live chat', 'contact support',
+    'speak to support', 'talk to support', 'human support', 'contact a person',
+    'speak to the team', 'talk to the team', 'reach the team', 'contact team',
+    'i need help from a person', 'connect me to a human', 'connect me with someone'
+  ];
+
   // Configuration defaults
   const DEFAULTS = {
     apiKey: '',
@@ -26,10 +35,19 @@
     showTypingIndicator: true,
     enableMarkdown: true,
     customCSS: '',
+    // Human handoff via WhatsApp
+    handoff: {
+      enabled: false,
+      whatsapp: '',           // e.g. '447911123456' (no + or spaces)
+      prefillMessage: 'Hi! I was chatting with your AI assistant and would like to speak with someone from the team.',
+      buttonLabel: 'Talk to a human',
+      confirmMessage: "I've opened WhatsApp for you in a new tab — the team will be with you shortly. Is there anything else I can help with in the meantime? 😊"
+    },
     onMessage: null,
     onError: null,
     onOpen: null,
-    onClose: null
+    onClose: null,
+    onHandoff: null
   };
 
   // Theme configurations
@@ -253,6 +271,25 @@
           35%          { transform: scale(1.1);  opacity: 1; }
         }
 
+        /* Handoff bar */
+        .handoff-bar {
+          padding: 8px 13px; background: #f7f8fc;
+          border-top: 1px solid #eef0f5;
+          display: flex; align-items: center; justify-content: center;
+          flex-shrink: 0;
+        }
+        .handoff-btn {
+          display: inline-flex; align-items: center; gap: 6px;
+          padding: 7px 14px; border-radius: 999px; border: none;
+          background: #fff; color: #25D366;
+          border: 1.5px solid #25D366;
+          font-size: 12.5px; font-weight: 600; font-family: inherit;
+          cursor: pointer; transition: background 0.2s, color 0.2s;
+          line-height: 1;
+        }
+        .handoff-btn:hover { background: #25D366; color: #fff; }
+        .handoff-btn svg { flex-shrink: 0; }
+
         /* Input */
         .chat-input-container {
           padding: 11px 13px; background: #ffffff;
@@ -329,6 +366,13 @@
             <div class="typing-dot"></div>
           </div>
         </div>
+        ${this.config.handoff?.enabled && this.config.handoff?.whatsapp ? `
+        <div class="handoff-bar">
+          <button class="handoff-btn" id="handoff-btn" type="button">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M17.472 14.382c-.297-.149-1.758-.867-2.03-.967-.273-.099-.471-.148-.67.15-.197.297-.767.966-.94 1.164-.173.199-.347.223-.644.075-.297-.15-1.255-.463-2.39-1.475-.883-.788-1.48-1.761-1.653-2.059-.173-.297-.018-.458.13-.606.134-.133.298-.347.446-.52.149-.174.198-.298.298-.497.099-.198.05-.371-.025-.52-.075-.149-.669-1.612-.916-2.207-.242-.579-.487-.5-.669-.51-.173-.008-.371-.01-.57-.01-.198 0-.52.074-.792.372-.272.297-1.04 1.016-1.04 2.479 0 1.462 1.065 2.875 1.213 3.074.149.198 2.096 3.2 5.077 4.487.709.306 1.262.489 1.694.625.712.227 1.36.195 1.871.118.571-.085 1.758-.719 2.006-1.413.248-.694.248-1.289.173-1.413-.074-.124-.272-.198-.57-.347m-5.421 7.403h-.004a9.87 9.87 0 01-5.031-1.378l-.361-.214-3.741.982.998-3.648-.235-.374a9.86 9.86 0 01-1.51-5.26c.001-5.45 4.436-9.884 9.888-9.884 2.64 0 5.122 1.03 6.988 2.898a9.825 9.825 0 012.893 6.994c-.003 5.45-4.437 9.884-9.885 9.884m8.413-18.297A11.815 11.815 0 0012.05 0C5.495 0 .16 5.335.157 11.892c0 2.096.547 4.142 1.588 5.945L.057 24l6.305-1.654a11.882 11.882 0 005.683 1.448h.005c6.554 0 11.89-5.335 11.893-11.893a11.821 11.821 0 00-3.48-8.413z"/></svg>
+            ${this.config.handoff.buttonLabel || 'Talk to a human'}
+          </button>
+        </div>` : ''}
         <div class="chat-input-container">
           <input
             id="chat-input"
@@ -362,6 +406,12 @@
       // Close button
       const closeButton = this.panel.querySelector('#close-button');
       closeButton.addEventListener('click', () => this.close());
+
+      // Handoff button
+      const handoffBtn = this.panel.querySelector('#handoff-btn');
+      if (handoffBtn) {
+        handoffBtn.addEventListener('click', () => this.triggerHandoff());
+      }
 
       // Input events
       this.input.addEventListener('keydown', (e) => {
@@ -402,6 +452,19 @@
       const message = this.input.value.trim();
       if (!message || this.isLoading) return;
 
+      // Check for handoff trigger phrases before sending to AI
+      if (this.config.handoff?.enabled && this.config.handoff?.whatsapp) {
+        const lower = message.toLowerCase();
+        const isHandoffRequest = HANDOFF_TRIGGERS.some(t => lower.includes(t));
+        if (isHandoffRequest) {
+          this.input.value = '';
+          this.sendButton.disabled = true;
+          this.addMessage('user', message);
+          this.triggerHandoff();
+          return;
+        }
+      }
+
       try {
         this.isLoading = true;
         this.input.value = '';
@@ -437,6 +500,29 @@
         this.isLoading = false;
         this.input.focus();
       }
+    }
+
+    triggerHandoff() {
+      const { whatsapp, prefillMessage, confirmMessage } = this.config.handoff;
+
+      // Build WhatsApp URL
+      const encoded = encodeURIComponent(prefillMessage || '');
+      const url = `https://wa.me/${whatsapp.replace(/\D/g, '')}${encoded ? '?text=' + encoded : ''}`;
+
+      // Open WhatsApp in new tab — user stays in widget
+      window.open(url, '_blank', 'noopener,noreferrer');
+
+      // Show confirm message in widget
+      const msg = confirmMessage || "I've opened WhatsApp for you in a new tab — the team will be with you shortly. Is there anything else I can help with in the meantime? 😊";
+      this.addMessage('assistant', msg);
+
+      // Fire callback if provided
+      if (this.config.onHandoff) {
+        this.config.onHandoff({ whatsapp, url });
+      }
+
+      this.dispatchEvent('chatpilot:handoff', { whatsapp, url });
+      this.input.focus();
     }
 
     async callLLM(userMessage) {

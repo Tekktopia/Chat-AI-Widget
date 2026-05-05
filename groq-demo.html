@@ -167,6 +167,11 @@
     </div>
 
     <div class="field">
+      <label>WhatsApp Number for Human Handoff <span style="color:rgba(255,255,255,0.3);font-weight:400">(optional — e.g. 447911123456)</span></label>
+      <input type="text" id="whatsapp" placeholder="447911123456" />
+    </div>
+
+    <div class="field">
       <button class="btn-launch" onclick="launchBot()">Launch Chat Widget ↗</button>
     </div>
   </div>
@@ -188,6 +193,7 @@
     if (chatInstance) chatInstance.destroy();
 
     const name = document.getElementById('botName').value.trim() || 'Aria';
+    const whatsapp = document.getElementById('whatsapp').value.trim();
 
     chatInstance = ChatPilot.init({
       apiKey,
@@ -202,6 +208,13 @@
       enableMarkdown: true,
       showTypingIndicator: true,
       autoOpen: true,
+      handoff: {
+        enabled: !!whatsapp,
+        whatsapp: whatsapp,
+        buttonLabel: 'Talk to a human',
+        prefillMessage: `Hi! I was chatting with ${name} and would like to speak with someone from the team.`,
+        confirmMessage: `I've opened WhatsApp for you in a new tab — the team will be with you shortly. Is there anything else I can help with in the meantime? 😊`
+      }
     });
   }
 </script>
