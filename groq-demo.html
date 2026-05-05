@@ -1,0 +1,186 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>ChatPilot – Groq Demo</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      background: linear-gradient(135deg, #0f0c29, #302b63, #24243e);
+      min-height: 100vh;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      color: #fff;
+    }
+
+    .hero {
+      text-align: center;
+      max-width: 600px;
+      padding: 40px 24px;
+    }
+
+    .badge {
+      display: inline-block;
+      background: rgba(255,255,255,0.1);
+      border: 1px solid rgba(255,255,255,0.2);
+      border-radius: 999px;
+      padding: 4px 14px;
+      font-size: 12px;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+      margin-bottom: 20px;
+    }
+
+    h1 {
+      font-size: clamp(2rem, 5vw, 3.2rem);
+      font-weight: 700;
+      line-height: 1.15;
+      margin-bottom: 16px;
+      background: linear-gradient(90deg, #a78bfa, #60a5fa);
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+    }
+
+    p {
+      font-size: 1.1rem;
+      color: rgba(255,255,255,0.7);
+      line-height: 1.6;
+      margin-bottom: 32px;
+    }
+
+    .setup-box {
+      background: rgba(255,255,255,0.05);
+      border: 1px solid rgba(255,255,255,0.1);
+      border-radius: 12px;
+      padding: 20px 24px;
+      text-align: left;
+      margin-bottom: 24px;
+    }
+
+    .setup-box label {
+      display: block;
+      font-size: 12px;
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+      color: rgba(255,255,255,0.5);
+      margin-bottom: 8px;
+    }
+
+    .setup-box input, .setup-box select, .setup-box textarea {
+      width: 100%;
+      background: rgba(255,255,255,0.08);
+      border: 1px solid rgba(255,255,255,0.15);
+      border-radius: 8px;
+      color: #fff;
+      padding: 10px 14px;
+      font-size: 14px;
+      outline: none;
+      margin-bottom: 14px;
+      resize: vertical;
+    }
+
+    .setup-box input::placeholder,
+    .setup-box textarea::placeholder { color: rgba(255,255,255,0.3); }
+
+    .setup-box input:focus,
+    .setup-box select:focus,
+    .setup-box textarea:focus {
+      border-color: rgba(167,139,250,0.6);
+    }
+
+    .setup-box select option { background: #302b63; }
+
+    button.launch {
+      width: 100%;
+      padding: 14px;
+      border: none;
+      border-radius: 10px;
+      background: linear-gradient(90deg, #7c3aed, #3b82f6);
+      color: #fff;
+      font-size: 16px;
+      font-weight: 600;
+      cursor: pointer;
+      transition: opacity 0.2s;
+    }
+    button.launch:hover { opacity: 0.9; }
+
+    .hint {
+      font-size: 12px;
+      color: rgba(255,255,255,0.35);
+      margin-top: 12px;
+    }
+    .hint a { color: rgba(167,139,250,0.8); text-decoration: none; }
+    .hint a:hover { text-decoration: underline; }
+  </style>
+</head>
+<body>
+
+<div class="hero">
+  <div class="badge">Groq-Powered</div>
+  <h1>ChatPilot AI</h1>
+  <p>Enter your Groq API key to launch the chat widget. The bot remembers context across the whole conversation and renders rich markdown.</p>
+
+  <div class="setup-box">
+    <label>Groq API Key</label>
+    <input type="password" id="apiKey" placeholder="gsk_..." />
+
+    <label>Model</label>
+    <select id="model">
+      <option value="llama-3.3-70b-versatile" selected>llama-3.3-70b-versatile (best)</option>
+      <option value="llama-3.1-8b-instant">llama-3.1-8b-instant (fastest)</option>
+      <option value="mixtral-8x7b-32768">mixtral-8x7b-32768 (large context)</option>
+      <option value="gemma2-9b-it">gemma2-9b-it</option>
+    </select>
+
+    <label>Bot name</label>
+    <input type="text" id="botName" value="Aria" />
+
+    <label>System prompt (who is this bot?)</label>
+    <textarea id="systemPrompt" rows="4">You are Aria, a brilliant and friendly AI assistant on this website. You give clear, thoughtful, and concise answers. You use markdown for formatting when it helps readability. You are warm, witty, and never condescending.</textarea>
+
+    <button class="launch" onclick="launchBot()">Launch Chat Widget</button>
+  </div>
+
+  <p class="hint">
+    Get a free API key at <a href="https://console.groq.com" target="_blank" rel="noopener noreferrer">console.groq.com</a>.
+    Your key is never sent anywhere except directly to Groq.
+  </p>
+</div>
+
+<!-- ChatPilot widget -->
+<script src="./src/ChatPilot.js"></script>
+<script>
+  let chatInstance = null;
+
+  function launchBot() {
+    const apiKey = document.getElementById('apiKey').value.trim();
+    if (!apiKey) {
+      alert('Please enter your Groq API key first.');
+      return;
+    }
+
+    // Destroy any existing instance
+    if (chatInstance) chatInstance.destroy();
+
+    chatInstance = ChatPilot.init({
+      apiKey: apiKey,
+      provider: 'groq',
+      model: document.getElementById('model').value,
+      assistantName: document.getElementById('botName').value || 'Aria',
+      systemPrompt: document.getElementById('systemPrompt').value,
+      welcomeMessage: `Hi! I'm ${document.getElementById('botName').value || 'Aria'}. How can I help you today?`,
+      theme: 'gradient',
+      maxTokens: 1024,
+      temperature: 0.7,
+      enableMarkdown: true,
+      showTypingIndicator: true,
+      autoOpen: true
+    });
+  }
+</script>
+</body>
+</html>

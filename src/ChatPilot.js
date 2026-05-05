@@ -1,7 +1,7 @@
 /**
  * ChatPilot - AI Chat Widget
- * A lightweight, customizable chat widget for websites
- * @version 1.0.0
+ * Groq-powered, multi-turn, markdown-capable chat widget
+ * @version 2.0.0
  * @year 2025
  * @license MIT
  */
@@ -13,16 +13,18 @@
   const DEFAULTS = {
     apiKey: '',
     assistantName: 'Assistant',
+    systemPrompt: 'You are a helpful, knowledgeable, and friendly AI assistant. You give clear, accurate, and thoughtful responses. You are concise but thorough — you never leave the user confused. You adapt your tone to match the conversation.',
+    welcomeMessage: 'Hi there! How can I help you today?',
     data: '',
     theme: 'default',
     position: 'bottom-right',
-    maxTokens: 150,
+    maxTokens: 1024,
     temperature: 0.7,
-    model: 'gemini-1.5-flash',
-    provider: 'gemini', // 'gemini' or 'openai'
+    model: 'llama-3.3-70b-versatile',
+    provider: 'groq', // 'groq', 'openai', or 'gemini'
     autoOpen: false,
     showTypingIndicator: true,
-    enableMarkdown: false,
+    enableMarkdown: true,
     customCSS: '',
     onMessage: null,
     onError: null,
@@ -44,8 +46,9 @@
 
   // API endpoints
   const API_ENDPOINTS = {
-    gemini: 'https://generativelanguage.googleapis.com/v1beta/models',
-    openai: 'https://api.openai.com/v1/chat/completions'
+    groq: 'https://api.groq.com/openai/v1/chat/completions',
+    openai: 'https://api.openai.com/v1/chat/completions',
+    gemini: 'https://generativelanguage.googleapis.com/v1beta/models'
   };
 
   class ChatPilot {
@@ -53,6 +56,8 @@
       this.config = this.mergeConfig(config);
       this.isOpen = false;
       this.isLoading = false;
+      // OpenAI-format conversation history for multi-turn context
+      this.conversationHistory = [];
       this.messageHistory = [];
       this.init();
     }
@@ -67,7 +72,11 @@
         this.createUI();
         this.bindEvents();
         this.setupMessageHandling();
-        
+
+        if (this.config.welcomeMessage) {
+          this.addMessage('assistant', this.config.welcomeMessage);
+        }
+
         if (this.config.autoOpen) {
           this.open();
         }
@@ -179,17 +188,59 @@
         
         .typing-indicator {
           display: none;
-          padding: 8px 12px;
-          background: #f5f5f5;
+          padding: 10px 14px;
+          background: #f0f4ff;
           border-radius: 8px;
           margin-right: 20px;
-          font-style: italic;
-          color: #666;
+          margin-bottom: 8px;
+          gap: 4px;
+          align-items: center;
         }
-        
+
         .typing-indicator.show {
-          display: block;
+          display: flex;
         }
+
+        .typing-dot {
+          width: 8px;
+          height: 8px;
+          border-radius: 50%;
+          background: #667eea;
+          animation: chatpilot-bounce 1.2s infinite ease-in-out;
+        }
+        .typing-dot:nth-child(1) { animation-delay: 0s; }
+        .typing-dot:nth-child(2) { animation-delay: 0.2s; }
+        .typing-dot:nth-child(3) { animation-delay: 0.4s; }
+
+        @keyframes chatpilot-bounce {
+          0%, 80%, 100% { transform: scale(0.6); opacity: 0.4; }
+          40%            { transform: scale(1);   opacity: 1; }
+        }
+
+        .message.assistant pre {
+          background: #f4f4f8;
+          border-radius: 6px;
+          padding: 8px 10px;
+          overflow-x: auto;
+          font-size: 12px;
+          margin: 6px 0 0;
+        }
+        .message.assistant code {
+          background: #eef0f8;
+          border-radius: 4px;
+          padding: 1px 5px;
+          font-size: 12px;
+        }
+        .message.assistant pre code {
+          background: none;
+          padding: 0;
+        }
+        .message.assistant h1,.message.assistant h2,.message.assistant h3 {
+          margin: 6px 0 2px;
+          font-size: 14px;
+        }
+        .message.assistant ul { padding-left: 16px; margin: 4px 0; }
+        .message.assistant a { color: #667eea; }
         
         .chat-input-container {
           padding: 16px 20px;
@@ -377,54 +428,77 @@
       }
     }
 
-    async callLLM(message) {
-      const prompt = this.buildPrompt(message);
-      
-      if (this.config.provider === 'openai') {
-        return await this.callOpenAI(prompt);
+    async callLLM(userMessage) {
+      // Push the new user turn into history
+      this.conversationHistory.push({ role: 'user', content: userMessage });
+
+      let reply;
+      if (this.config.provider === 'gemini') {
+        reply = await this.callGemini(userMessage);
       } else {
-        return await this.callGemini(prompt);
+        // groq and openai both use the OpenAI-compatible messages format
+        reply = await this.callOpenAICompat(this.config.provider);
       }
+
+      // Store assistant reply in history for future turns
+      this.conversationHistory.push({ role: 'assistant', content: reply });
+      return reply;
     }
 
-    buildPrompt(message) {
-      const context = this.config.data ? `${this.config.data}\n\n` : '';
-      return `${context}User: ${message}\n${this.config.assistantName}:`;
+    buildMessages() {
+      const system = [
+        this.config.systemPrompt,
+        this.config.data ? `\n\nAdditional context:\n${this.config.data}` : ''
+      ].join('');
+
+      return [
+        { role: 'system', content: system },
+        ...this.conversationHistory
+      ];
     }
 
-    async callOpenAI(prompt) {
-      const response = await fetch(API_ENDPOINTS.openai, {
-      method: 'POST',
-      headers: {
-        'Authorization': `Bearer ${this.config.apiKey}`,
-        'Content-Type': 'application/json'
-      },
-      body: JSON.stringify({
-          model: this.config.model || 'gpt-3.5-turbo',
-          messages: [{ role: 'user', content: prompt }],
+    async callOpenAICompat(provider) {
+      const endpoint = provider === 'groq' ? API_ENDPOINTS.groq : API_ENDPOINTS.openai;
+      const defaultModel = provider === 'groq' ? 'llama-3.3-70b-versatile' : 'gpt-4o-mini';
+
+      const response = await fetch(endpoint, {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${this.config.apiKey}`,
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({
+          model: this.config.model || defaultModel,
+          messages: this.buildMessages(),
           max_tokens: this.config.maxTokens,
           temperature: this.config.temperature
-      })
-    });
+        })
+      });
 
       if (!response.ok) {
-        throw new Error(`OpenAI API error: ${response.status}`);
+        const err = await response.json().catch(() => ({}));
+        throw new Error(`${provider} API error ${response.status}: ${err?.error?.message || response.statusText}`);
       }
 
       const data = await response.json();
-      return data.choices?.[0]?.message?.content || 'No response received';
+      return data.choices?.[0]?.message?.content?.trim() || 'No response received';
     }
 
-    async callGemini(prompt) {
+    async callGemini(userMessage) {
+      const model = this.config.model || 'gemini-1.5-flash';
       const response = await fetch(
-        `${API_ENDPOINTS.gemini}/${this.config.model}:generateContent?key=${this.config.apiKey}`,
+        `${API_ENDPOINTS.gemini}/${model}:generateContent?key=${this.config.apiKey}`,
         {
           method: 'POST',
-          headers: {
-            'Content-Type': 'application/json'
-          },
+          headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
-            contents: [{ parts: [{ text: prompt }] }],
+            systemInstruction: {
+              parts: [{ text: this.config.systemPrompt + (this.config.data ? `\n\nContext:\n${this.config.data}` : '') }]
+            },
+            contents: this.conversationHistory.map(m => ({
+              role: m.role === 'assistant' ? 'model' : 'user',
+              parts: [{ text: m.content }]
+            })),
             generationConfig: {
               maxOutputTokens: this.config.maxTokens,
               temperature: this.config.temperature
@@ -438,7 +512,7 @@
       }
 
       const data = await response.json();
-      return data.candidates?.[0]?.content?.parts?.[0]?.text || 'No response received';
+      return data.candidates?.[0]?.content?.parts?.[0]?.text?.trim() || 'No response received';
     }
 
     addMessage(type, content) {
@@ -459,13 +533,36 @@
     }
 
     parseMarkdown(text) {
-      // Simple markdown parsing for basic formatting
-      return text
-        .replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>')
-        .replace(/\*(.*?)\*/g, '<em>$1</em>')
-        .replace(/`(.*?)`/g, '<code>$1</code>')
+      // Escape HTML first to prevent XSS
+      const escaped = text
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;');
+
+      return escaped
+        // Code blocks (must come before inline code)
+        .replace(/```[\w]*\n?([\s\S]*?)```/g, '<pre><code>$1</code></pre>')
+        // Inline code
+        .replace(/`([^`]+)`/g, '<code>$1</code>')
+        // Headers
+        .replace(/^### (.+)$/gm, '<h3>$1</h3>')
+        .replace(/^## (.+)$/gm, '<h2>$1</h2>')
+        .replace(/^# (.+)$/gm, '<h1>$1</h1>')
+        // Bold and italic
+        .replace(/\*\*\*(.+?)\*\*\*/g, '<strong><em>$1</em></strong>')
+        .replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>')
+        .replace(/\*(.+?)\*/g, '<em>$1</em>')
+        // Unordered lists
+        .replace(/^\s*[-*] (.+)$/gm, '<li>$1</li>')
+        .replace(/(<li>.*<\/li>)/gs, '<ul>$1</ul>')
+        // Numbered lists
+        .replace(/^\d+\. (.+)$/gm, '<li>$1</li>')
+        // Links
+        .replace(/\[([^\]]+)\]\(([^)]+)\)/g, '<a href="$2" target="_blank" rel="noopener noreferrer">$1</a>')
+        // Line breaks (after block elements are processed)
+        .replace(/\n\n/g, '</p><p>')
         .replace(/\n/g, '<br>');
-  }
+    }
 
     showTypingIndicator() {
       this.typingIndicator.classList.add('show');
@@ -556,6 +653,7 @@
 
     clearHistory() {
       this.messageHistory = [];
+      this.conversationHistory = [];
       this.messagesContainer.innerHTML = `
         <div class="typing-indicator" id="typing-indicator">
           <div class="typing-dot"></div>
@@ -564,6 +662,9 @@
         </div>
       `;
       this.typingIndicator = this.messagesContainer.querySelector('#typing-indicator');
+      if (this.config.welcomeMessage) {
+        this.addMessage('assistant', this.config.welcomeMessage);
+      }
     }
   }
 
@@ -572,20 +673,23 @@
     init: function(config) {
       return new ChatPilot(config);
     },
-    
-    // Utility methods
+
     create: function(config) {
       return new ChatPilot(config);
     },
-    
-    // Version info
-    version: '1.0.0',
-    
-    // Defaults for reference
+
+    version: '2.0.0',
     defaults: DEFAULTS,
-    
-    // Available themes
-    themes: Object.keys(THEMES)
+    themes: Object.keys(THEMES),
+    providers: ['groq', 'openai', 'gemini'],
+
+    // Groq model suggestions
+    groqModels: [
+      'llama-3.3-70b-versatile',
+      'llama-3.1-8b-instant',
+      'mixtral-8x7b-32768',
+      'gemma2-9b-it'
+    ]
   };
 
 })(window, document);
